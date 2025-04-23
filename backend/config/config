@@ -1,0 +1,9 @@
+Host Electo
+  Hostname rdp.compexim.hu
+  Port 10001
+  User coldlaw
+  IdentityFile /root/.ssh/electo.rsa
+  LocalForward 127.0.0.1:5432 127.0.0.1:5432
+  StrictHostKeyChecking no
+  ServerAliveInterval 30
+  ServerAliveCountMax 3
