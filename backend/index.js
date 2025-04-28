@@ -156,6 +156,36 @@ app.post('/api/create-and-link-manufacturer', async (req, res) => {
   }
 });
 
+app.post('/api/inactive-supplier-manufacturer', async (req, res) => {
+  const { supplier_manufacturer_id, name } = req.body;
+
+  if (!supplier_manufacturer_id || !name) {
+    return res.status(400).json({ error: 'Hiányzó mezők: supplier_manufacturer_id vagy name' });
+  }
+
+    const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    await client.query(
+      `UPDATE supplier_manufacturers
+       SET is_active = 0
+       WHERE id = $1`,
+      [supplier_manufacturer_id]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true, manufacturer_id: newManufacturerId });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Hiba a gyártó inkativálásánál:', error);
+    res.status(500).json({ error: 'Hiba a gyártó inkativálásánál' });
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/api/pair-manufacturer', async (req, res) => {
   const { supplier_manufacturer_id, manufacturer_id } = req.body;
 
