@@ -91,19 +91,13 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
           value: 'create',
           child: Text('Új saját gyártóként hozzáadás'),
         ),
-        PopupMenuItem<String>(
-          value: 'inactive',
-          child: Text('Gyártó inaktívá tétele'),
-        ),
       ],
     );
 
     if (selected == 'create') {
       await _createManufacturerFromSupplier(supplier);
     }
-    if (selected == 'inactive') {
-      await _inactiveSupplierManufacturer(supplier);
-    }
+
   }
 
   Future<void> _createManufacturerFromSupplier(Map<String, dynamic> supplier) async {
