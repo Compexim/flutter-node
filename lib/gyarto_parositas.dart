@@ -21,6 +21,9 @@ class GyartoParositasPageState extends State<GyartoParositasPage> {
   bool isLoading = false;
   bool hasMore = true;
 
+  Map<String, bool> editing = {};
+  Map<String, TextEditingController> controllers = {};
+
   @override
   void initState() {
     super.initState();
@@ -84,6 +87,18 @@ class GyartoParositasPageState extends State<GyartoParositasPage> {
           manufacturers.addAll(newItems);
           page++;
           if (newItems.length < 20) hasMore = false;
+          // Initialize editing and controllers for new items
+          for (var item in newItems) {
+            final id = item['id'] as String;
+            if (!editing.containsKey(id)) {
+              editing[id] = false;
+            }
+            if (!controllers.containsKey(id)) {
+              controllers[id] = TextEditingController(text: item['name']);
+            } else {
+              controllers[id]!.text = item['name'];
+            }
+          }
         });
       } else {
         print('Hibás API válasz: ${response.statusCode}');
@@ -125,6 +140,35 @@ class GyartoParositasPageState extends State<GyartoParositasPage> {
     }
   }
 
+  Future<void> _updateManufacturer(String id, String newName) async {
+    final uri = Uri.parse('http://localhost:3000/api/update-manufacturer-name');
+
+    try {
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'manufacturer_id': id,
+          'new_name': newName,
+        }),
+      );
+       debugPrint('Új név: ${newName}') 
+      if (response.statusCode == 200) {
+        debugPrint('Gyártó frissítve');
+        setState(() {
+          editing[id] = false;
+          final index = manufacturers.indexWhere((m) => m['id'] == id);
+          if (index != -1) {
+            manufacturers[index]['name'] = newName;
+          }
+        });
+      } else {
+        debugPrint('Gyártó frissítés sikertelen: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('Gyártó frissítés hiba: $e');
+    }
+  }
  
 Widget _buildManufacturerCard(Map<String, dynamic> manufacturer) {
   final name = manufacturer['name'] as String;
@@ -198,7 +242,6 @@ Widget _buildManufacturerCard(Map<String, dynamic> manufacturer) {
   }
 }
 
-
   return Card(
     elevation: 2,
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -210,9 +253,41 @@ Widget _buildManufacturerCard(Map<String, dynamic> manufacturer) {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           GestureDetector(
+            onTap: () {
+              setState(() {
+                editing[id] = true;
+                controllers[id]?.text = name;
+              });
+            },
             onSecondaryTapDown: (details) =>
                 showManufacturerMenu(context, details.globalPosition),
-            child: Row(
+            child: editing[id] == true
+                ? TextField(
+                    controller: controllers[id],
+                    autofocus: true,
+                    onSubmitted: (value) {
+                      if (value.trim().isNotEmpty) {
+                        _updateManufacturer(id, value.trim());
+                      } else {
+                        setState(() {
+                          editing[id] = false;
+                          controllers[id]?.text = name;
+                        });
+                      }
+                    },
+                    onEditingComplete: () {
+                      final newName = controllers[id]?.text.trim() ?? '';
+                      if (newName.isNotEmpty) {
+                        _updateManufacturer(id, newName);
+                      } else {
+                        setState(() {
+                          editing[id] = false;
+                          controllers[id]?.text = name;
+                        });
+                      }
+                    },
+                  )
+                : Row(
   mainAxisAlignment: MainAxisAlignment.spaceBetween,
   children: [
     Expanded(
@@ -230,7 +305,6 @@ Widget _buildManufacturerCard(Map<String, dynamic> manufacturer) {
       Icon(Icons.link, size: 16, color: Color(0xFF6C5DD3)),
   ],
 ),
-
           ),
           ...aliases.map((alias) => Padding(
               padding: const EdgeInsets.only(top: 4.0),
@@ -256,6 +330,9 @@ Widget _buildManufacturerCard(Map<String, dynamic> manufacturer) {
   void dispose() {
     _scrollController.dispose();
     _searchController.dispose();
+    for (var controller in controllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 

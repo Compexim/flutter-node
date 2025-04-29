@@ -242,6 +242,35 @@ app.post('/api/unpair-all', async (req, res) => {
   }
 });
 
+
+// Új gyártó nevének frissítése végpont
+app.post('/api/update-manufacturer-name', async (req, res) => {
+  console.log('update-manufacturer-name body:', req.body);
+  const { manufacturer_id, new_name } = req.body;
+  if (!manufacturer_id || !new_name) {
+    return res.status(400).json({ error: 'manufacturer_id és new_name kötelező' });
+  }
+
+  const slug = new_name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  print(new_name,'-',manufacturer_id);
+  const client = await pool.connect();
+  try {
+    await client.query(
+      `UPDATE manufacturers SET name = $1, slug = $2 WHERE id = $3`,
+      [new_name, slug, manufacturer_id]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Hiba a név frissítésénél:', error);
+    res.status(500).json({ error: 'Adatbázis hiba' });
+  } finally {
+    client.release();
+  }
+});
+
 module.exports = app;
 
 
