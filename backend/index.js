@@ -84,6 +84,7 @@ app.get('/api/unmatched-supplier-manufacturers', async (req, res) => {
        FROM supplier_manufacturers
        WHERE manufacturer_id IS NULL
          AND ($1 = '' OR LOWER(name) LIKE '%' || LOWER($1) || '%')
+         AND is_active = TRUE
        ORDER BY name
        LIMIT $2 OFFSET $3`,
       [search, limit, offset]
@@ -156,11 +157,11 @@ app.post('/api/create-and-link-manufacturer', async (req, res) => {
   }
 });
 
-app.post('/api/inactive-supplier-manufacturer', async (req, res) => {
-  const { supplier_manufacturer_id, name } = req.body;
+app.post('/api/inactivate-supplier-manufacturer', async (req, res) => {
+  const { supplier_manufacturer_id } = req.body;
 
-  if (!supplier_manufacturer_id || !name) {
-    return res.status(400).json({ error: 'Hiányzó mezők: supplier_manufacturer_id vagy name' });
+  if (!supplier_manufacturer_id) {
+    return res.status(400).json({ error: 'supplier_manufacturer_id kötelező' });
   }
 
     const client = await pool.connect();
@@ -170,13 +171,13 @@ app.post('/api/inactive-supplier-manufacturer', async (req, res) => {
 
     await client.query(
       `UPDATE supplier_manufacturers
-       SET is_active = 0
+       SET is_active = FALSE
        WHERE id = $1`,
       [supplier_manufacturer_id]
     );
 
     await client.query('COMMIT');
-    res.json({ success: true, manufacturer_id: newManufacturerId });
+    res.json({ success: true, supplier_manufacturer_id });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Hiba a gyártó inkativálásánál:', error);
@@ -245,7 +246,7 @@ app.post('/api/unpair-all', async (req, res) => {
 
 // Új gyártó nevének frissítése végpont
 app.post('/api/update-manufacturer-name', async (req, res) => {
-  console.log('update-manufacturer-name body:', req.body);
+//  console.log('update-manufacturer-name body:', req.body);
   const { manufacturer_id, new_name } = req.body;
   if (!manufacturer_id || !new_name) {
     return res.status(400).json({ error: 'manufacturer_id és new_name kötelező' });
@@ -255,7 +256,7 @@ app.post('/api/update-manufacturer-name', async (req, res) => {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  print(new_name,'-',manufacturer_id);
+   // console.log(new_name, '-', manufacturer_id);
   const client = await pool.connect();
   try {
     await client.query(
@@ -272,5 +273,3 @@ app.post('/api/update-manufacturer-name', async (req, res) => {
 });
 
 module.exports = app;
-
-

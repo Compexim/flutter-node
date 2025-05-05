@@ -52,7 +52,8 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
     }
 
     final uri = Uri.parse(
-        'http://localhost:3000/api/unmatched-supplier-manufacturers?page=$page&search=$lastSearch');
+      'http://localhost:3000/api/unmatched-supplier-manufacturers?page=$page&search=$lastSearch',
+    );
 
     try {
       final response = await http.get(uri);
@@ -60,12 +61,8 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
 
-        final newItems = data
-            .map((e) => {
-                  'id': e['id'],
-                  'name': e['name'],
-                })
-            .toList();
+        final newItems =
+            data.map((e) => {'id': e['id'], 'name': e['name']}).toList();
 
         setState(() {
           suppliers.addAll(newItems);
@@ -82,26 +79,42 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
     setState(() => isLoading = false);
   }
 
-  void _showContextMenu(BuildContext context, Offset position, Map<String, dynamic> supplier) async {
+  void _showContextMenu(
+    BuildContext context,
+    Offset position,
+    Map<String, dynamic> supplier,
+  ) async {
     final selected = await showMenu<String>(
       context: context,
-      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        position.dx,
+        position.dy,
+      ),
       items: [
         PopupMenuItem<String>(
           value: 'create',
           child: Text('Új saját gyártóként hozzáadás'),
         ),
+        PopupMenuItem<String>(value: 'deactivate', child: Text('Inaktívál')),
       ],
     );
 
     if (selected == 'create') {
       await _createManufacturerFromSupplier(supplier);
     }
-
+    if (selected == 'deactivate') {
+      await _deactivateSupplier(supplier);
+    }
   }
 
-  Future<void> _createManufacturerFromSupplier(Map<String, dynamic> supplier) async {
-    final uri = Uri.parse('http://localhost:3000/api/create-and-link-manufacturer');
+  Future<void> _createManufacturerFromSupplier(
+    Map<String, dynamic> supplier,
+  ) async {
+    final uri = Uri.parse(
+      'http://localhost:3000/api/create-and-link-manufacturer',
+    );
 
     try {
       final response = await http.post(
@@ -120,7 +133,8 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
         refreshList();
 
         if (mounted) {
-          final parent = context.findAncestorStateOfType<GyartoParositasPageState>();
+          final parent =
+              context.findAncestorStateOfType<GyartoParositasPageState>();
           parent?.refreshManufacturers();
         }
       } else {
@@ -128,6 +142,32 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
       }
     } catch (e) {
       debugPrint('API hiba: $e');
+    }
+  }
+
+  Future<void> _deactivateSupplier(Map<String, dynamic> supplier) async {
+    final uri = Uri.parse(
+      'http://localhost:3000/api/inactivate-supplier-manufacturer',
+    );
+    try {
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'supplier_manufacturer_id': supplier['id']}),
+      );
+      if (response.statusCode == 200) {
+        debugPrint('Sikeres inaktiválás: ${supplier['id']}');
+        refreshList();
+        if (mounted) {
+          final parent =
+              context.findAncestorStateOfType<GyartoParositasPageState>();
+          parent?.refreshManufacturers();
+        }
+      } else {
+        debugPrint('Hiba inaktiválásnál: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('API hiba inaktiválásnál: $e');
     }
   }
 
@@ -158,55 +198,67 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
           ),
         ),
         Expanded(
-          child: suppliers.isEmpty && !isLoading
-              ? Center(child: Text('Nincs találat!'))
-              : ListView.builder(
-                  controller: _scrollController,
-                  itemCount: suppliers.length + (hasMore ? 1 : 0),
-                  itemBuilder: (context, index) {
-                    if (index >= suppliers.length) {
-                      return Center(
+          child:
+              suppliers.isEmpty && !isLoading
+                  ? Center(child: Text('Nincs találat!'))
+                  : ListView.builder(
+                    controller: _scrollController,
+                    itemCount: suppliers.length + (hasMore ? 1 : 0),
+                    itemBuilder: (context, index) {
+                      if (index >= suppliers.length) {
+                        return Center(
                           child: Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: CircularProgressIndicator(),
-                      ));
-                    }
+                            padding: const EdgeInsets.all(8.0),
+                            child: CircularProgressIndicator(),
+                          ),
+                        );
+                      }
 
-                    final supplier = suppliers[index];
+                      final supplier = suppliers[index];
 
-                    Widget tile = GestureDetector(
-                      onSecondaryTapDown: (details) {
-                        _showContextMenu(context, details.globalPosition, supplier);
-                      },
-                      child: Card(
-                        margin:
-                            EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                        child: ListTile(
-                          title: Text(supplier['name'],
-                              style: TextStyle(fontSize: 14)),
-                        ),
-                      ),
-                    );
-
-                    if (widget.isDraggable) {
-                      tile = Draggable<Map<String, dynamic>>(
-                        data: supplier,
-                        feedback: Material(
-                          child: Container(
-                            padding: EdgeInsets.all(8),
-                            color: Colors.grey[300],
-                            child: Text(supplier['name'],
-                                style: TextStyle(fontSize: 14)),
+                      Widget tile = GestureDetector(
+                        onSecondaryTapDown: (details) {
+                          _showContextMenu(
+                            context,
+                            details.globalPosition,
+                            supplier,
+                          );
+                        },
+                        child: Card(
+                          margin: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
+                          child: ListTile(
+                            title: Text(
+                              supplier['name'],
+                              style: TextStyle(fontSize: 14),
+                            ),
                           ),
                         ),
-                        childWhenDragging: Opacity(opacity: 0.5, child: tile),
-                        child: tile,
                       );
-                    }
 
-                    return tile;
-                  },
-                ),
+                      if (widget.isDraggable) {
+                        tile = Draggable<Map<String, dynamic>>(
+                          data: supplier,
+                          feedback: Material(
+                            child: Container(
+                              padding: EdgeInsets.all(8),
+                              color: Colors.grey[300],
+                              child: Text(
+                                supplier['name'],
+                                style: TextStyle(fontSize: 14),
+                              ),
+                            ),
+                          ),
+                          childWhenDragging: Opacity(opacity: 0.5, child: tile),
+                          child: tile,
+                        );
+                      }
+
+                      return tile;
+                    },
+                  ),
         ),
       ],
     );
