@@ -16,6 +16,9 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
 
+  // Selected supplier IDs for bulk actions
+  final Set<String> _selectedSupplierIds = {};
+
   List<Map<String, dynamic>> suppliers = [];
   int page = 1;
   bool isLoading = false;
@@ -171,10 +174,34 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
     }
   }
 
+  /// Bulk create manufacturers for all selected suppliers
+  Future<void> _bulkCreateSelected() async {
+    // Get selected supplier maps
+    final selectedSuppliers =
+        suppliers.where((s) => _selectedSupplierIds.contains(s['id'])).toList();
+    for (var supplier in selectedSuppliers) {
+      await _createManufacturerFromSupplier(supplier);
+    }
+    setState(() {
+      _selectedSupplierIds.clear();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
+        if (_selectedSupplierIds.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              vertical: 8.0,
+              horizontal: 12.0,
+            ),
+            child: ElevatedButton(
+              onPressed: _bulkCreateSelected,
+              child: Text('Kijelölt gyártók hozzáadása'),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.all(8.0),
           child: TextField(
@@ -230,6 +257,20 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
                             vertical: 4,
                           ),
                           child: ListTile(
+                            leading: Checkbox(
+                              value: _selectedSupplierIds.contains(
+                                supplier['id'],
+                              ),
+                              onChanged: (checked) {
+                                setState(() {
+                                  if (checked == true) {
+                                    _selectedSupplierIds.add(supplier['id']);
+                                  } else {
+                                    _selectedSupplierIds.remove(supplier['id']);
+                                  }
+                                });
+                              },
+                            ),
                             title: Text(
                               supplier['name'],
                               style: TextStyle(fontSize: 14),
