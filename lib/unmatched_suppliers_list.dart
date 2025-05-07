@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 import 'gyarto_parositas.dart'; // szükséges, hogy ismerje a GyartoParositasPageState típust
+import 'activity_filter_utils.dart'; // Importáljuk a közös utility fájlt
 
 class UnmatchedSuppliersList extends StatefulWidget {
   final bool isDraggable;
@@ -16,19 +17,21 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
 
-  // Selected supplier IDs for bulk actions
   final Set<String> _selectedSupplierIds = {};
 
   List<Map<String, dynamic>> suppliers = [];
   int page = 1;
   bool isLoading = false;
   bool hasMore = true;
-  String lastSearch = '';
+  // String lastSearch = ''; // Ezt mostantól a _searchController.text adja
+
+  ActivityFilterStatus _supplierActivityFilter =
+      ActivityFilterStatus.all; // Szűrő állapota
 
   @override
   void initState() {
     super.initState();
-    _fetchSuppliers();
+    _fetchSuppliers(isInitialLoad: true); // Kezdeti betöltés
 
     _scrollController.addListener(() {
       if (_scrollController.position.pixels >=
@@ -41,45 +44,147 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
   }
 
   void refreshList() {
-    _fetchSuppliers(isSearch: true);
+    _fetchSuppliers(isSearchOrFilterChange: true);
   }
 
-  Future<void> _fetchSuppliers({bool isSearch = false}) async {
+  Future<void> _fetchSuppliers({
+    bool isSearchOrFilterChange = false,
+    bool isInitialLoad = false,
+  }) async {
+    if (isLoading && !isInitialLoad)
+      return; // Ne fusson párhuzamosan, kivéve ha kezdeti betöltés
     setState(() => isLoading = true);
 
-    if (isSearch) {
+    if (isSearchOrFilterChange) {
       page = 1;
       suppliers.clear();
       hasMore = true;
-      lastSearch = _searchController.text;
     }
 
-    final uri = Uri.parse(
-      'http://localhost:3000/api/unmatched-supplier-manufacturers?page=$page&search=$lastSearch',
+    final currentSearchTerm = _searchController.text;
+    final String isActiveParam = activityFilterStatusToQueryParam(
+      _supplierActivityFilter,
     );
+    String apiUrl =
+        'http://localhost:3000/api/unmatched-supplier-manufacturers?page=$page&search=${Uri.encodeComponent(currentSearchTerm)}';
+    if (isActiveParam.isNotEmpty) {
+      apiUrl += '&isActive=$isActiveParam';
+    }
+    final uri = Uri.parse(apiUrl);
 
     try {
       final response = await http.get(uri);
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
-
         final newItems =
-            data.map((e) => {'id': e['id'], 'name': e['name']}).toList();
+            data
+                .map(
+                  (e) => {
+                    'id': e['id'],
+                    'name': e['name'],
+                    'is_active':
+                        e['is_active'] ??
+                        true, // Alapértelmezett érték, ha a backend nem küldi
+                  },
+                )
+                .toList();
 
-        setState(() {
-          suppliers.addAll(newItems);
-          page++;
-          if (newItems.length < 20) hasMore = false;
-        });
+        if (mounted) {
+          setState(() {
+            suppliers.addAll(newItems);
+            page++;
+            if (newItems.length < 20) hasMore = false;
+          });
+        }
       } else {
-        print('Hiba: ${response.statusCode}');
+        debugPrint('Hiba a beszállítók lekérdezésekor: ${response.statusCode}');
+        if (mounted) setState(() => hasMore = false);
       }
     } catch (e) {
-      print('API hívás hiba: $e');
+      debugPrint('API hívás hiba (beszállítók): $e');
+      if (mounted) setState(() => hasMore = false);
     }
 
-    setState(() => isLoading = false);
+    if (mounted) {
+      setState(() => isLoading = false);
+    }
+  }
+
+  Future<void> _createManufacturerFromSupplier(
+    Map<String, dynamic> supplier,
+  ) async {
+    final uri = Uri.parse(
+      'http://localhost:3000/api/create-and-link-manufacturer',
+    );
+    try {
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'supplier_manufacturer_id': supplier['id'],
+          'name': supplier['name'],
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final result = json.decode(response.body);
+        debugPrint(
+          'Sikeres összekötés (új gyártó): ${result['manufacturer_id']}',
+        );
+        refreshList(); // Frissítjük ezt a listát
+        if (mounted) {
+          final parent =
+              context.findAncestorStateOfType<GyartoParositasPageState>();
+          parent?.refreshManufacturers(); // Frissítjük a másik oldalt is
+        }
+      } else {
+        debugPrint('Hiba új gyártó létrehozásakor: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('API hiba új gyártó létrehozásakor: $e');
+    }
+  }
+
+  Future<void> _deactivateSupplier(Map<String, dynamic> supplier) async {
+    final uri = Uri.parse(
+      'http://localhost:3000/api/inactivate-supplier-manufacturer',
+    );
+    try {
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'supplier_manufacturer_id': supplier['id']}),
+      );
+      if (response.statusCode == 200) {
+        debugPrint('Sikeres inaktiválás: ${supplier['id']}');
+        refreshList();
+      } else {
+        debugPrint('Hiba inaktiválásnál: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('API hiba inaktiválásnál: $e');
+    }
+  }
+
+  Future<void> _bulkCreateSelected() async {
+    final selectedSuppliersData =
+        suppliers.where((s) => _selectedSupplierIds.contains(s['id'])).toList();
+    if (selectedSuppliersData.isEmpty) return;
+
+    // Ideiglenesen inaktívvá tesszük a gombot, amíg a művelet fut
+    setState(
+      () {},
+    ); // Kényszerítjük a UI frissítést, hogy a gomb állapota változzon ha kell
+
+    for (var supplier in selectedSuppliersData) {
+      await _createManufacturerFromSupplier(supplier);
+    }
+    if (mounted) {
+      setState(() {
+        _selectedSupplierIds.clear();
+      });
+    }
   }
 
   void _showContextMenu(
@@ -100,7 +205,10 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
           value: 'create',
           child: Text('Új saját gyártóként hozzáadás'),
         ),
-        PopupMenuItem<String>(value: 'deactivate', child: Text('Inaktívál')),
+        if (supplier['is_active'] ==
+            true) // Csak akkor jelenítjük meg, ha aktív
+          PopupMenuItem<String>(value: 'deactivate', child: Text('Inaktívál')),
+        // Ide jöhetne egy "Aktivál" opció is, ha a backend támogatja
       ],
     );
 
@@ -112,122 +220,108 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
     }
   }
 
-  Future<void> _createManufacturerFromSupplier(
-    Map<String, dynamic> supplier,
-  ) async {
-    final uri = Uri.parse(
-      'http://localhost:3000/api/create-and-link-manufacturer',
-    );
-
-    try {
-      final response = await http.post(
-        uri,
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'supplier_manufacturer_id': supplier['id'],
-          'name': supplier['name'],
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        final result = json.decode(response.body);
-        debugPrint('Sikeres összekötés: ${result['manufacturer_id']}');
-
-        refreshList();
-
-        if (mounted) {
-          final parent =
-              context.findAncestorStateOfType<GyartoParositasPageState>();
-          parent?.refreshManufacturers();
-        }
-      } else {
-        debugPrint('Hiba: ${response.statusCode}');
-      }
-    } catch (e) {
-      debugPrint('API hiba: $e');
-    }
-  }
-
-  Future<void> _deactivateSupplier(Map<String, dynamic> supplier) async {
-    final uri = Uri.parse(
-      'http://localhost:3000/api/inactivate-supplier-manufacturer',
-    );
-    try {
-      final response = await http.post(
-        uri,
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'supplier_manufacturer_id': supplier['id']}),
-      );
-      if (response.statusCode == 200) {
-        debugPrint('Sikeres inaktiválás: ${supplier['id']}');
-        refreshList();
-        if (mounted) {
-          final parent =
-              context.findAncestorStateOfType<GyartoParositasPageState>();
-          parent?.refreshManufacturers();
-        }
-      } else {
-        debugPrint('Hiba inaktiválásnál: ${response.statusCode}');
-      }
-    } catch (e) {
-      debugPrint('API hiba inaktiválásnál: $e');
-    }
-  }
-
-  /// Bulk create manufacturers for all selected suppliers
-  Future<void> _bulkCreateSelected() async {
-    // Get selected supplier maps
-    final selectedSuppliers =
-        suppliers.where((s) => _selectedSupplierIds.contains(s['id'])).toList();
-    for (var supplier in selectedSuppliers) {
-      await _createManufacturerFromSupplier(supplier);
-    }
-    setState(() {
-      _selectedSupplierIds.clear();
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        if (_selectedSupplierIds.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(
-              vertical: 8.0,
-              horizontal: 12.0,
-            ),
-            child: ElevatedButton(
-              onPressed: _bulkCreateSelected,
-              child: Text('Kijelölt gyártók hozzáadása'),
-            ),
-          ),
         Padding(
           padding: const EdgeInsets.all(8.0),
+          child: Row(
+            children: [
+              Expanded(
+                child: DropdownButtonHideUnderline(
+                  child: Container(
+                    padding: EdgeInsets.symmetric(horizontal: 10.0),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(5.0),
+                      border: Border.all(
+                        color: Colors.grey.shade400,
+                        style: BorderStyle.solid,
+                        width: 0.80,
+                      ),
+                    ),
+                    child: DropdownButton<ActivityFilterStatus>(
+                      value: _supplierActivityFilter,
+                      isExpanded: true,
+                      // hint: Text("Státusz"),
+                      onChanged: (ActivityFilterStatus? newValue) {
+                        if (newValue != null) {
+                          setState(() {
+                            _supplierActivityFilter = newValue;
+                            refreshList();
+                          });
+                        }
+                      },
+                      items:
+                          ActivityFilterStatus.values.map((
+                            ActivityFilterStatus status,
+                          ) {
+                            return DropdownMenuItem<ActivityFilterStatus>(
+                              value: status,
+                              child: Text(statusToString(status)),
+                            );
+                          }).toList(),
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(width: 10),
+              ElevatedButton(
+                onPressed:
+                    _selectedSupplierIds.isNotEmpty
+                        ? _bulkCreateSelected
+                        : null,
+                child: Text('Kijelöltek felvitele'),
+                style: ElevatedButton.styleFrom(
+                  padding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8.0, 0, 8.0, 8.0),
           child: TextField(
             controller: _searchController,
             decoration: InputDecoration(
               hintText: 'Szűrés beszállítói gyártóra...',
-              suffixIcon: IconButton(
-                icon: Icon(Icons.clear),
-                onPressed: () {
-                  _searchController.clear();
-                  refreshList();
-                },
+              suffixIcon:
+                  _searchController.text.isNotEmpty
+                      ? IconButton(
+                        icon: Icon(Icons.clear),
+                        onPressed: () {
+                          _searchController.clear();
+                          refreshList();
+                        },
+                      )
+                      : null,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(5.0),
+              ),
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: 10.0,
+                vertical: 8.0,
               ),
             ),
-            onChanged: (_) {
+            onChanged: (value) {
+              // Debounce hasznos lehet itt
               refreshList();
             },
-            onSubmitted: (_) {
-              refreshList();
-            },
+            onSubmitted: (_) => refreshList(),
           ),
         ),
         Expanded(
           child:
               suppliers.isEmpty && !isLoading
-                  ? Center(child: Text('Nincs találat!'))
+                  ? Center(
+                    child: Text(
+                      _searchController.text.isNotEmpty ||
+                              _supplierActivityFilter !=
+                                  ActivityFilterStatus.all
+                          ? 'Nincs a szűrésnek megfelelő találat!'
+                          : 'Nincsenek párosítatlan beszállítói gyártók!',
+                    ),
+                  )
                   : ListView.builder(
                     controller: _scrollController,
                     itemCount: suppliers.length + (hasMore ? 1 : 0),
@@ -235,13 +329,17 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
                       if (index >= suppliers.length) {
                         return Center(
                           child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: CircularProgressIndicator(),
+                            padding: const EdgeInsets.all(16.0),
+                            child:
+                                isLoading
+                                    ? CircularProgressIndicator()
+                                    : SizedBox.shrink(),
                           ),
                         );
                       }
 
                       final supplier = suppliers[index];
+                      final bool isActive = supplier['is_active'] ?? true;
 
                       Widget tile = GestureDetector(
                         onSecondaryTapDown: (details) {
@@ -256,6 +354,7 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
                             horizontal: 12,
                             vertical: 4,
                           ),
+                          color: isActive ? Colors.white : Colors.grey[200],
                           child: ListTile(
                             leading: Checkbox(
                               value: _selectedSupplierIds.contains(
@@ -270,11 +369,25 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
                                   }
                                 });
                               },
+                              activeColor: Theme.of(context).primaryColor,
                             ),
                             title: Text(
                               supplier['name'],
-                              style: TextStyle(fontSize: 14),
+                              style: TextStyle(
+                                fontSize: 14,
+                                decoration:
+                                    isActive
+                                        ? TextDecoration.none
+                                        : TextDecoration.lineThrough,
+                              ),
                             ),
+                            trailing:
+                                isActive
+                                    ? null
+                                    : Icon(
+                                      Icons.unpublished_outlined,
+                                      color: Colors.grey[600],
+                                    ),
                           ),
                         ),
                       );
@@ -283,9 +396,13 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
                         tile = Draggable<Map<String, dynamic>>(
                           data: supplier,
                           feedback: Material(
+                            elevation: 4.0,
                             child: Container(
-                              padding: EdgeInsets.all(8),
-                              color: Colors.grey[300],
+                              padding: EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[300],
+                                borderRadius: BorderRadius.circular(8),
+                              ),
                               child: Text(
                                 supplier['name'],
                                 style: TextStyle(fontSize: 14),
@@ -296,7 +413,6 @@ class UnmatchedSuppliersListState extends State<UnmatchedSuppliersList> {
                           child: tile,
                         );
                       }
-
                       return tile;
                     },
                   ),
